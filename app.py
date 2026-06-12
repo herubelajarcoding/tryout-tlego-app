@@ -393,16 +393,33 @@ def effective_subject_pool(category: str, source_filter: str | None) -> list:
     return [q for q in filter_pool_by_source(QUESTION_POOL, source_filter) if q.get("category") == category]
 
 
+def unique_question_count(items: list) -> int:
+    """Count usable unique stems, because beberapa bank Word memiliki stem persis sama.
+
+    Angka ini dipakai untuk menentukan apakah TO per materi bisa mencapai 50 soal
+    tanpa menampilkan soal yang benar-benar berulang.
+    """
+    seen = set()
+    for q in items:
+        seen.add(normalized_question_key(q))
+    return len(seen)
+
+
 def subject_source_availability(category: str, source_filter: str | None) -> tuple[int, int, int]:
-    """Return (effective_total, bank1_count, bank2_count) for UI captions."""
-    bank1_count = sum(1 for q in QUESTION_POOL if q.get("category") == category and question_source_type(q) == "Bank Soal")
-    bank2_count = sum(1 for q in QUESTION_POOL if q.get("category") == category and question_source_type(q) == "Non Bank Soal")
+    """Return (effective_unique_total, bank1_unique_count, bank2_unique_count) for UI captions."""
+    bank1_items = [q for q in QUESTION_POOL if q.get("category") == category and question_source_type(q) == "Bank Soal"]
+    bank2_items = [q for q in QUESTION_POOL if q.get("category") == category and question_source_type(q) == "Non Bank Soal"]
+    bank1_count = unique_question_count(bank1_items)
+    bank2_count = unique_question_count(bank2_items)
     source_filter = source_filter or "All"
     if source_filter in {"Bank Soal 1", "Bank Soal Only"}:
-        return bank1_count + (0 if bank1_count >= SUBJECT_QUESTION_COUNT else bank2_count), bank1_count, bank2_count
+        # Bank Soal 1 diprioritaskan, tetapi jika stem uniknya kurang dari 50,
+        # sistem boleh mengambil pelengkap dari Bank Soal 2 pada materi yang sama.
+        effective_count = unique_question_count(bank1_items + bank2_items)
+        return effective_count, bank1_count, bank2_count
     if source_filter in {"Bank Soal 2", "Non Bank Soal"}:
         return bank2_count, bank1_count, bank2_count
-    return bank1_count + bank2_count, bank1_count, bank2_count
+    return unique_question_count(bank1_items + bank2_items), bank1_count, bank2_count
 
 
 SOURCE_COUNTS = {
@@ -550,26 +567,48 @@ def generate_tryout_questions(seed: int | None = None, source_filter: str = "All
 def generate_subject_questions(category: str, seed: int | None = None, source_filter: str = "All") -> list:
     """Generate TO fokus per materi 50 soal.
 
-    Untuk pilihan Bank Soal 1, sistem mengambil soal Bank Soal 1 terlebih dahulu. Jika jumlahnya
-    belum mencapai 50 pada materi tersebut, kekurangan diisi dari Bank Soal 2.
+    Khusus Bank Soal 1: sistem mengambil soal Bank Soal 1 terlebih dahulu,
+    tetapi yang dihitung sebagai cukup adalah stem yang bisa tampil unik di paket TO.
+    Jika Bank Soal 1 banyak berisi stem berulang sehingga paket belum mencapai 50 soal,
+    kekurangan otomatis diisi dari Bank Soal 2 pada materi yang sama.
     """
     import random
     rng = random.Random(seed if seed is not None else time.time_ns())
-    candidates = effective_subject_pool(category, source_filter)
-    rng.shuffle(candidates)
+
     selected = []
     selected_ids = set()
     selected_texts = set()
-    for q in candidates:
-        if len(selected) >= SUBJECT_QUESTION_COUNT:
-            break
-        append_unique_question(selected, q, selected_ids, selected_texts)
-    if len(selected) < SUBJECT_QUESTION_COUNT:
-        # Fallback aman: jika setelah penghindaran soal mirip kurang dari 50, isi sisa dengan opsi paling tidak bermasalah.
-        for q in candidates:
+
+    def take_from(items: list, allow_similar: bool = False) -> None:
+        pool = list(items)
+        rng.shuffle(pool)
+        for q in pool:
             if len(selected) >= SUBJECT_QUESTION_COUNT:
                 break
-            append_unique_question(selected, q, selected_ids, selected_texts, allow_similar=True)
+            append_unique_question(selected, q, selected_ids, selected_texts, allow_similar=allow_similar)
+
+    source_filter = source_filter or "All"
+    if source_filter in {"Bank Soal 1", "Bank Soal Only"}:
+        primary = [q for q in QUESTION_POOL if q.get("category") == category and question_source_type(q) == "Bank Soal"]
+        fallback = [q for q in QUESTION_POOL if q.get("category") == category and question_source_type(q) == "Non Bank Soal"]
+
+        # 1) Utamakan Bank Soal 1 yang tidak berulang/mirip.
+        take_from(primary, allow_similar=False)
+        # 2) Jika Bank Soal 1 ternyata banyak stem sama, isi kekurangan dari Bank Soal 2.
+        if len(selected) < SUBJECT_QUESTION_COUNT:
+            take_from(fallback, allow_similar=False)
+        # 3) Jika masih kurang karena similarity guard terlalu ketat, longgarkan kemiripan,
+        #    tetapi tetap tidak mengizinkan stem persis sama.
+        if len(selected) < SUBJECT_QUESTION_COUNT:
+            take_from(primary, allow_similar=True)
+        if len(selected) < SUBJECT_QUESTION_COUNT:
+            take_from(fallback, allow_similar=True)
+    else:
+        candidates = effective_subject_pool(category, source_filter)
+        take_from(candidates, allow_similar=False)
+        if len(selected) < SUBJECT_QUESTION_COUNT:
+            take_from(candidates, allow_similar=True)
+
     rng.shuffle(selected)
     final = []
     for no, q in enumerate(selected, start=1):
@@ -577,6 +616,7 @@ def generate_subject_questions(category: str, seed: int | None = None, source_fi
         qq["runtime_no"] = no
         final.append(qq)
     return final
+
 
 def init_state() -> None:
     st.session_state.setdefault(key_for("started"), False)
@@ -781,12 +821,12 @@ if not started:
             available, bank1_available, bank2_available = subject_source_availability(subject_choice, source_choice)
             if source_choice == "Bank Soal 1" and bank1_available < SUBJECT_QUESTION_COUNT:
                 st.caption(
-                    f"Bank Soal 1 pada materi ini tersedia {bank1_available} soal. "
-                    f"Karena kurang dari {SUBJECT_QUESTION_COUNT}, paket akan otomatis menambah dari Bank Soal 2 "
-                    f"sebanyak kebutuhan yang tersedia. Total efektif: {available} soal."
+                    f"Bank Soal 1 pada materi ini memiliki {bank1_available} stem unik. "
+                    f"Karena belum mencapai {SUBJECT_QUESTION_COUNT}, paket otomatis menambah dari Bank Soal 2 "
+                    f"pada materi yang sama. Total stem unik efektif: {available}."
                 )
             else:
-                st.caption(f"Tersedia {available} soal pada materi ini dari sumber: {source_choice}. Paket fokus akan mengambil {min(SUBJECT_QUESTION_COUNT, available)} soal secara acak.")
+                st.caption(f"Tersedia {available} stem unik pada materi ini dari sumber: {source_choice}. Paket fokus akan mengambil {min(SUBJECT_QUESTION_COUNT, available)} soal secara acak.")
             if available == 0:
                 st.warning("Tidak ada soal untuk kombinasi materi dan sumber ini. Pilih sumber atau materi lain.")
         else:
@@ -798,7 +838,7 @@ if not started:
             st.info("Saran simulasi asesmen: 100 soal dalam 150 menit. Setelah submit, jawaban terkunci dan pembahasan bisa dibuka.")
             start_label = "Mulai TO Acak Umum"
         else:
-            st.info("TO per materi berisi 50 soal acak dari materi yang dipilih. Jika Bank Soal 1 pada materi tersebut kurang dari 50 soal, sistem otomatis menambah dari Bank Soal 2.")
+            st.info("TO per materi berisi 50 soal acak dari materi yang dipilih. Jika Bank Soal 1 pada materi tersebut kurang dari 50 stem unik, sistem otomatis menambah dari Bank Soal 2.")
             start_label = "Mulai TO Per Materi"
         can_start = not (mode_choice == "TO Per Materi" and available == 0) and available > 0
         if st.button(start_label, type="primary", use_container_width=True, disabled=not can_start):

@@ -1,7 +1,7 @@
 {
   "metadata": {
     "title": "Bank Soal Try Out Kompetensi Teknis DJPb",
-    "version": "v32_100soal_balanced_per_materi_fallback",
+    "version": "v34_per_materi_bank1_topup_fix",
     "generated_at": "2026-06-08",
     "description": "Bank soal diselaraskan dengan gaya contoh dokumen: stem langsung, opsi satu tipe, pembahasan satu narasi, dan distractor lebih dekat.",
     "tryout_question_count": 100,
@@ -81,7 +81,7 @@
     "source_v26_questions": 720,
     "dropped_near_duplicate_or_redundant": 236,
     "dedup_note": "v27 removes generated/non-Word near-duplicates while preserving Word-derived questions; app sampling also avoids similarity_group and text-similar questions where possible.",
-    "updated": "2026-06-08",
+    "updated": "2026-06-12",
     "source_filter_options": [
       "All",
       "Bank Soal 1",
@@ -110,7 +110,8 @@
       "Bank_Soal_Integral_500_Materi_Perbendaharaan-v3.docx": 237
     },
     "v31_update": "TO Acak Umum diubah menjadi 100 soal dengan timer default 150 menit; label sumber diubah menjadi Bank Soal 1 dan Bank Soal 2; kuota Fungsi Pendukung dibatasi 5 soal per TO umum agar tidak mendominasi.",
-    "notes_v32": "TO umum menggunakan komposisi 6 materi inti x15 + Fungsi Pendukung x10. TO Per Materi dengan sumber Bank Soal 1 otomatis mengisi kekurangan sampai 50 dari Bank Soal 2 pada materi yang sama."
+    "notes_v32": "TO umum menggunakan komposisi 6 materi inti x15 + Fungsi Pendukung x10. TO Per Materi dengan sumber Bank Soal 1 otomatis mengisi kekurangan sampai 50 dari Bank Soal 2 pada materi yang sama.",
+    "notes_v34": "Perbaikan TO Per Materi: Bank Soal 1 kini dihitung berdasarkan soal yang benar-benar bisa tampil unik. Jika setelah guard duplikasi/kemiripan belum mencapai 50, kekurangan otomatis ditambah dari Bank Soal 2 pada materi yang sama. Ini memperbaiki kasus Akuntansi yang sebelumnya hanya tampil 19 soal karena banyak stem Word yang berulang/mirip."
   },
   "question_pool": [
     {
